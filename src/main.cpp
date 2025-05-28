@@ -11,6 +11,9 @@
 #include <vector>
 #include <random>
 #include <chrono>
+#include "imgui.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_opengl3.h"
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
@@ -62,6 +65,13 @@ public:
         glViewport(0, 0, windowWidth, windowHeight);
         glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
         glEnable(GL_DEPTH_TEST);
+
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        ImGuiIO& io = ImGui::GetIO(); (void)io;
+        ImGui::StyleColorsDark();
+        ImGui_ImplGlfw_InitForOpenGL(window, true);
+        ImGui_ImplOpenGL3_Init("#version 460");
 
         return 0;
 	}
@@ -503,8 +513,6 @@ int main()
     float speedX = 1.5f;
     float speedZ = 1.0f;
 
-    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-
     App.mainLoop([&App, &camera] {
 
         camera.cameraMovement(App.deltaTime);
@@ -525,6 +533,32 @@ int main()
         App.makeDeltaTime();
         glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+
+        static bool wireframeOn = false;     // Must be static to persist
+        static bool wasPressed = false;
+
+        if (glfwGetKey(App.window, GLFW_KEY_R) == GLFW_PRESS) {
+            if (!wasPressed) {
+                wireframeOn = !wireframeOn;
+                wasPressed = true;
+            }
+        }
+        else {
+            wasPressed = false;
+        }
+
+        ImGui::Begin("Settings");
+        ImGui::Checkbox("Wireframe", &wireframeOn);
+        ImGui::End();
+
+        ImGui::Render();
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+        (wireframeOn ? glPolygonMode(GL_FRONT_AND_BACK, GL_LINE) : glPolygonMode(GL_FRONT_AND_BACK, GL_FILL));
 
         BouncingCube.position.x += speedX * App.deltaTime;
         BouncingCube.position.z += speedZ * App.deltaTime;
@@ -565,6 +599,9 @@ int main()
     });
 
     // App Clean Up
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
     BGT.cleanUp();
     glfwTerminate();
 }
