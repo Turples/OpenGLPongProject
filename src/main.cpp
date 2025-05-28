@@ -32,6 +32,14 @@ int randomInt(int min, int max) {
     return distr(gen);
 }
 
+float Clamp(float value, float min, float max) {
+    if (value < min)
+        return min;
+    if (value > max)
+        return max;
+    return value;
+}
+
 class myCoolOpenGLApp {
 public:
     GLFWwindow* window = nullptr;
@@ -46,7 +54,7 @@ public:
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-        window = glfwCreateWindow(windowWidth, windowHeight, "LearnOpenGL", NULL, NULL);
+        window = glfwCreateWindow(windowWidth, windowHeight, "Fly Around Bouncing Ball", NULL, NULL);
         if (window == NULL)
         {
             std::cout << "Failed to create GLFW window" << std::endl;
@@ -72,6 +80,7 @@ public:
         ImGui::StyleColorsDark();
         ImGui_ImplGlfw_InitForOpenGL(window, true);
         ImGui_ImplOpenGL3_Init("#version 460");
+        io.IniFilename = nullptr;
 
         return 0;
 	}
@@ -510,15 +519,18 @@ int main()
     renderCube BouncingCube;
     BouncingCube.setup(0.0f, 0.0f, 1.0f, 1.0f, glm::vec3(0.0f, -0.575f, 1.25f), glm::vec3(0.25f, 0.25f, 0.25f));
 
-    float speedX = 1.5f;
-    float speedZ = 1.0f;
+    float speedX = 25.0f;
+    float speedZ = 12.5f;
+    float speedXToggle = 25.0f;
+    float speedZToggle = 12.5f;
+    int sliderOn = 1;
 
     App.mainLoop([&App, &camera] {
 
         camera.cameraMovement(App.deltaTime);
 
     },
-    [&BGT, &App, &camera, &backgroundCube, &TopCube, &BottomCube, &RightCube, &LeftCube, &BouncingCube, &speedX, &speedZ] {
+    [&BGT, &App, &camera, &backgroundCube, &TopCube, &BottomCube, &RightCube, &LeftCube, &BouncingCube, &speedX, &speedZ, &speedXToggle, &speedZToggle, &sliderOn] {
         GLint viewport[4];
         glGetIntegerv(GL_VIEWPORT, viewport);
 
@@ -539,45 +551,76 @@ int main()
         ImGui::NewFrame();
 
         static bool wireframeOn = false;     // Must be static to persist
-        static bool wasPressed = false;
+        static bool upPressed = false;
+        static bool downPressed = false;
+        static bool leftPressed = false;
+        static bool rightPressed = false;
+        static bool rPressed = false;
 
         if (glfwGetKey(App.window, GLFW_KEY_R) == GLFW_PRESS) {
-            if (!wasPressed) {
+            if (!rPressed) {
                 wireframeOn = !wireframeOn;
-                wasPressed = true;
+                rPressed = true;
             }
         }
         else {
-            wasPressed = false;
+            rPressed = false;
         }
 
-        ImGui::Begin("Settings");
-        ImGui::Checkbox("Wireframe", &wireframeOn);
-        ImGui::End();
+        if (glfwGetKey(App.window, GLFW_KEY_UP) == GLFW_PRESS) {
+            if (!upPressed) {
+                sliderOn++;
+                if (sliderOn > 2) sliderOn = 1;
+                upPressed = true;
+            }
+        }
+        else {
+            upPressed = false;
+        }
 
-        ImGui::Render();
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        if (glfwGetKey(App.window, GLFW_KEY_DOWN) == GLFW_PRESS) {
+            if (!downPressed) {
+                sliderOn--;
+                if (sliderOn < 1) sliderOn = 2;
+                downPressed = true;
+            }
+        }
+        else {
+            downPressed = false;
+        }
+
+        if (glfwGetKey(App.window, GLFW_KEY_LEFT) == GLFW_PRESS) {
+            (sliderOn == 1 ? speedXToggle -= 0.01f : speedZToggle -= 0.01f);
+            speedXToggle = Clamp(speedXToggle, 0.0f, 50.0f);
+            speedZToggle = Clamp(speedZToggle, 0.0f, 50.0f);
+        }
+
+        if (glfwGetKey(App.window, GLFW_KEY_RIGHT) == GLFW_PRESS) {
+            (sliderOn == 1 ? speedXToggle += 0.01f : speedZToggle += 0.01f);
+            speedXToggle = Clamp(speedXToggle, 0.0f, 50.0f);
+            speedZToggle = Clamp(speedZToggle, 0.0f, 50.0f);
+        }
 
         (wireframeOn ? glPolygonMode(GL_FRONT_AND_BACK, GL_LINE) : glPolygonMode(GL_FRONT_AND_BACK, GL_FILL));
 
         BouncingCube.position.x += speedX * App.deltaTime;
         BouncingCube.position.z += speedZ * App.deltaTime;
 
-        float bounceCooldown = 0.0f; // seconds
-
-        // In your main loop, update cooldown:
-        if (bounceCooldown > 0.0f)
-            bounceCooldown -= App.deltaTime;
-
-        if ((BouncingCube.position.x > 1.225f || BouncingCube.position.x < -1.225f) && bounceCooldown <= 0.0f) {
-            speedX = -speedX;
-            bounceCooldown = 0.2f; // 100 ms delay before next bounce
+        if (BouncingCube.position.x > 1.225 && speedX > 0) {
+            speedX = -std::abs(speedXToggle);
         }
-            
-        if ((BouncingCube.position.z > 1.975f || BouncingCube.position.z < 0.525f) && bounceCooldown <= 0.0f) {
-            speedZ = -speedZ;
-            bounceCooldown = 0.2f; // 100 ms delay before next bounce
+        if (BouncingCube.position.x < -1.225 && speedX < 0) {
+            speedX = std::abs(speedXToggle);
         }
+        speedX = (speedX > 0 ? std::abs(speedXToggle) : -std::abs(speedXToggle));
+
+        if (BouncingCube.position.z > 1.975f && speedZ > 0) {
+            speedZ = -std::abs(speedZToggle);
+        }
+        if (BouncingCube.position.z < 0.525f && speedZ < 0) {
+            speedZ = std::abs(speedZToggle);
+        }
+        speedZ = (speedZ > 0 ? std::abs(speedZToggle) : -std::abs(speedZToggle));
 
         if ((BouncingCube.position.x > 1.75f || BouncingCube.position.x < -1.75f) || (BouncingCube.position.z > 2.5f || BouncingCube.position.z < 0.0f)) {
             BouncingCube.position = glm::vec3(0.0f, -0.575f, 1.25f);
@@ -593,9 +636,35 @@ int main()
         RightCube.render();
         camera.setCameraThings(RightCube.BGT.shaderProgram);
         LeftCube.render();
-        camera.setCameraThings(RightCube.BGT.shaderProgram);
+        camera.setCameraThings(LeftCube.BGT.shaderProgram);
         BouncingCube.render();
         camera.setCameraThings(BouncingCube.BGT.shaderProgram);
+
+        ImGui::SetNextWindowSize(ImVec2(275, 120));
+        ImGui::Begin("Settings");
+        ImGui::Checkbox("Wireframe (Press R)", &wireframeOn);
+        ImGui::Text("Use arrow keys to change speed values");
+        if (sliderOn == 1) {
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(255, 60, 60, 255)); // darker background (optional)
+            ImGui::SliderFloat("Speed X", &speedXToggle, 0.0f, 50.0f);
+            ImGui::PopStyleColor(1); // Match the number of PushStyleColor calls
+        }
+        else {
+            ImGui::SliderFloat("Speed X", &speedXToggle, 0.0f, 50.0f);
+        }
+
+        if (sliderOn == 2) {
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(255, 60, 60, 255)); // darker background (optional)
+            ImGui::SliderFloat("Speed Z", &speedZToggle, 0.0f, 50.0f);
+            ImGui::PopStyleColor(1); // Match the number of PushStyleColor calls
+        }
+        else {
+            ImGui::SliderFloat("Speed Z", &speedZToggle, 0.0f, 50.0f);
+        }
+        ImGui::End();
+
+        ImGui::Render();
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     });
 
     // App Clean Up
