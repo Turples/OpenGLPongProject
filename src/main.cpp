@@ -43,8 +43,8 @@ float Clamp(float value, float min, float max) {
 class myCoolOpenGLApp {
 public:
     GLFWwindow* window = nullptr;
-    int windowWidth = 800;
-    int windowHeight = 600;
+    int windowWidth = 1920;
+    int windowHeight = 1280;
     float deltaTime = 0.0f; // Time between current and last frame
     float lastFrame = 0.0f; // Time of last frame
 
@@ -54,13 +54,20 @@ public:
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-        window = glfwCreateWindow(windowWidth, windowHeight, "Fly Around Bouncing Ball", NULL, NULL);
+        GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+        const GLFWvidmode* mode = glfwGetVideoMode(monitor);
+
+
+        window = glfwCreateWindow(mode->width, mode->height, "Fly Around Bouncing Ball", monitor, nullptr);
         if (window == NULL)
         {
             std::cout << "Failed to create GLFW window" << std::endl;
             glfwTerminate();
             return -1;
         }
+
+        windowWidth = mode->width;
+        windowHeight = mode->height;
 
         glfwMakeContextCurrent(window);
 
@@ -426,6 +433,10 @@ public:
         view = glm::lookAt(cameraPos, cameraPos + cameraDir, cameraUp);
     }
 
+    void setPosition(glm::vec3 position, glm::vec3 lookAt) {
+        view = glm::lookAt(position, lookAt, cameraUp);
+    }
+
     void setCameraThings(unsigned int shaderProgram) {
         glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
         glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
@@ -519,18 +530,38 @@ int main()
     renderCube BouncingCube;
     BouncingCube.setup(0.0f, 0.0f, 1.0f, 1.0f, glm::vec3(0.0f, -0.575f, 1.25f), glm::vec3(0.25f, 0.25f, 0.25f));
 
-    float speedX = 25.0f;
-    float speedZ = 12.5f;
-    float speedXToggle = 25.0f;
-    float speedZToggle = 12.5f;
-    int sliderOn = 1;
+    renderCube RightPlayer;
+    RightPlayer.setup(1.0f, 0.0f, 0.0f, 1.0f, glm::vec3(-1.0, -0.75, 1.25), glm::vec3(0.10f, 0.25f, 0.40f));
 
-    App.mainLoop([&App, &camera] {
+    renderCube LeftPlayer;
+    LeftPlayer.setup(1.0f, 0.0f, 0.0f, 1.0f, glm::vec3(1.0, -0.75, 1.25), glm::vec3(0.10f, 0.25f, 0.40f));
 
-        camera.cameraMovement(App.deltaTime);
+    float speedX = 1;
+    float speedZ = 0.66;
+    int leftPlayerScore = 0;
+    int rightPlayerScore = 0;
 
+    ImGuiIO& io = ImGui::GetIO();
+    ImFont* smallFont = io.Fonts->AddFontFromFileTTF("fonts\\VCR_OSD_MONO_1.001.ttf", 12.0f); // 32 px
+    ImFont* bigFont = io.Fonts->AddFontFromFileTTF("fonts\\VCR_OSD_MONO_1.001.ttf", 120.0f); // 32 px
+
+    camera.setPosition(glm::vec3(0.0f, 3.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+
+    App.mainLoop([&App, &LeftPlayer, &RightPlayer] {
+        if (glfwGetKey(App.window, GLFW_KEY_W) == GLFW_PRESS)
+            LeftPlayer.position.z += 0.75f * App.deltaTime;
+        if (glfwGetKey(App.window, GLFW_KEY_S) == GLFW_PRESS)
+            LeftPlayer.position.z -= 0.75f * App.deltaTime;
+
+        if (glfwGetKey(App.window, GLFW_KEY_UP) == GLFW_PRESS)
+            RightPlayer.position.z += 0.75f * App.deltaTime;
+        if (glfwGetKey(App.window, GLFW_KEY_DOWN) == GLFW_PRESS)
+            RightPlayer.position.z -= 0.75f * App.deltaTime;
+
+        LeftPlayer.position.z = Clamp(LeftPlayer.position.z, 0.6f, 1.9f);
+        RightPlayer.position.z = Clamp(RightPlayer.position.z, 0.6f, 1.9f);
     },
-    [&BGT, &App, &camera, &backgroundCube, &TopCube, &BottomCube, &RightCube, &LeftCube, &BouncingCube, &speedX, &speedZ, &speedXToggle, &speedZToggle, &sliderOn] {
+    [&BGT, &App, &camera, &backgroundCube, &TopCube, &BottomCube, &RightCube, &LeftCube, &BouncingCube, &LeftPlayer, &RightPlayer, &speedX, &speedZ, &bigFont, &smallFont, &leftPlayerScore, &rightPlayerScore] {
         GLint viewport[4];
         glGetIntegerv(GL_VIEWPORT, viewport);
 
@@ -551,11 +582,9 @@ int main()
         ImGui::NewFrame();
 
         static bool wireframeOn = false;     // Must be static to persist
-        static bool upPressed = false;
-        static bool downPressed = false;
-        static bool leftPressed = false;
-        static bool rightPressed = false;
         static bool rPressed = false;
+        static bool hasBouncedX = false;
+        static bool hasBouncedZ = false;
 
         if (glfwGetKey(App.window, GLFW_KEY_R) == GLFW_PRESS) {
             if (!rPressed) {
@@ -567,66 +596,115 @@ int main()
             rPressed = false;
         }
 
-        if (glfwGetKey(App.window, GLFW_KEY_UP) == GLFW_PRESS) {
-            if (!upPressed) {
-                sliderOn++;
-                if (sliderOn > 2) sliderOn = 1;
-                upPressed = true;
-            }
-        }
-        else {
-            upPressed = false;
-        }
-
-        if (glfwGetKey(App.window, GLFW_KEY_DOWN) == GLFW_PRESS) {
-            if (!downPressed) {
-                sliderOn--;
-                if (sliderOn < 1) sliderOn = 2;
-                downPressed = true;
-            }
-        }
-        else {
-            downPressed = false;
-        }
-
-        if (glfwGetKey(App.window, GLFW_KEY_LEFT) == GLFW_PRESS) {
-            (sliderOn == 1 ? speedXToggle -= 0.01f : speedZToggle -= 0.01f);
-            speedXToggle = Clamp(speedXToggle, 0.0f, 50.0f);
-            speedZToggle = Clamp(speedZToggle, 0.0f, 50.0f);
-        }
-
-        if (glfwGetKey(App.window, GLFW_KEY_RIGHT) == GLFW_PRESS) {
-            (sliderOn == 1 ? speedXToggle += 0.01f : speedZToggle += 0.01f);
-            speedXToggle = Clamp(speedXToggle, 0.0f, 50.0f);
-            speedZToggle = Clamp(speedZToggle, 0.0f, 50.0f);
-        }
-
         (wireframeOn ? glPolygonMode(GL_FRONT_AND_BACK, GL_LINE) : glPolygonMode(GL_FRONT_AND_BACK, GL_FILL));
 
         BouncingCube.position.x += speedX * App.deltaTime;
         BouncingCube.position.z += speedZ * App.deltaTime;
 
-        if (BouncingCube.position.x > 1.225 && speedX > 0) {
-            speedX = -std::abs(speedXToggle);
+        bool leftPlayerHit = (
+            BouncingCube.position.x - (BouncingCube.scale.x / 2) < LeftPlayer.position.x + (LeftPlayer.scale.x / 2) &&
+            BouncingCube.position.x + (BouncingCube.scale.x / 2) > LeftPlayer.position.x - (LeftPlayer.scale.x / 2) &&
+            BouncingCube.position.z - (BouncingCube.scale.z / 2) < LeftPlayer.position.z + (LeftPlayer.scale.z / 2) &&
+            BouncingCube.position.z + (BouncingCube.scale.z / 2) > LeftPlayer.position.z - (LeftPlayer.scale.z / 2)
+            );
+
+        bool rightPlayerHit = (
+            BouncingCube.position.x - (BouncingCube.scale.x / 2) < RightPlayer.position.x + (RightPlayer.scale.x / 2) &&
+            BouncingCube.position.x + (BouncingCube.scale.x / 2) > RightPlayer.position.x - (RightPlayer.scale.x / 2) &&
+            BouncingCube.position.z - (BouncingCube.scale.z / 2) < RightPlayer.position.z + (RightPlayer.scale.z / 2) &&
+            BouncingCube.position.z + (BouncingCube.scale.z / 2) > RightPlayer.position.z - (RightPlayer.scale.z / 2)
+            );
+
+
+        if (leftPlayerHit) {
+            // Calculate overlap for left player separately
+            float overlapXLeft = 0.0f;
+            if (BouncingCube.position.x < LeftPlayer.position.x) {
+                overlapXLeft = (BouncingCube.position.x + BouncingCube.scale.x / 2) - (LeftPlayer.position.x - LeftPlayer.scale.x / 2);
+            }
+            else {
+                overlapXLeft = (LeftPlayer.position.x + LeftPlayer.scale.x / 2) - (BouncingCube.position.x - BouncingCube.scale.x / 2);
+            }
+
+            float overlapZLeft = 0.0f;
+            if (BouncingCube.position.z < LeftPlayer.position.z) {
+                overlapZLeft = (BouncingCube.position.z + BouncingCube.scale.z / 2) - (LeftPlayer.position.z - LeftPlayer.scale.z / 2);
+            }
+            else {
+                overlapZLeft = (LeftPlayer.position.z + LeftPlayer.scale.z / 2) - (BouncingCube.position.z - BouncingCube.scale.z / 2);
+            }
+
+            // Reflect speeds based on which overlap is smaller (collision axis)
+            if (overlapXLeft < overlapZLeft && speedX > 0 && !hasBouncedX) {  // The cube is moving towards the left player (speedX > 0)
+                (speedX > 0 ? speedX += 0.1f : speedX -= 0.1f);
+                speedX = -speedX;
+                hasBouncedX = true;
+            }
+            else if (overlapZLeft < overlapXLeft && !hasBouncedZ) {
+                (speedZ > 0 ? speedZ += 0.1f : speedZ -= 0.1f);
+                speedZ = -speedZ;
+                hasBouncedZ = true;
+            }
         }
-        if (BouncingCube.position.x < -1.225 && speedX < 0) {
-            speedX = std::abs(speedXToggle);
+
+        if (rightPlayerHit) {
+            // Calculate overlap for right player separately
+            float overlapXRight = 0.0f;
+            if (BouncingCube.position.x < RightPlayer.position.x) {
+                overlapXRight = (BouncingCube.position.x + BouncingCube.scale.x / 2) - (RightPlayer.position.x - RightPlayer.scale.x / 2);
+            }
+            else {
+                overlapXRight = (RightPlayer.position.x + RightPlayer.scale.x / 2) - (BouncingCube.position.x - BouncingCube.scale.x / 2);
+            }
+
+            float overlapZRight = 0.0f;
+            if (BouncingCube.position.z < RightPlayer.position.z) {
+                overlapZRight = (BouncingCube.position.z + BouncingCube.scale.z / 2) - (RightPlayer.position.z - RightPlayer.scale.z / 2);
+            }
+            else {
+                overlapZRight = (RightPlayer.position.z + RightPlayer.scale.z / 2) - (BouncingCube.position.z - BouncingCube.scale.z / 2);
+            }
+
+            if (overlapXRight < overlapZRight && speedX < 0 && !hasBouncedX) {  // Moving toward right player
+                (speedX > 0 ? speedX += 0.1f : speedX -= 0.1f);
+                speedX = -speedX;
+                hasBouncedX = true;
+            }
+            else if (overlapZRight < overlapXRight && !hasBouncedZ) {
+                (speedZ > 0 ? speedZ += 0.1f : speedZ -= 0.1f);
+                speedZ = -speedZ;
+                hasBouncedZ = true;
+            }
         }
-        speedX = (speedX > 0 ? std::abs(speedXToggle) : -std::abs(speedXToggle));
+
+        if (!leftPlayerHit && !rightPlayerHit) {
+            hasBouncedX = false;
+            hasBouncedZ = false;
+        }
+
+        // Calculate overlaps on Z axis
 
         if (BouncingCube.position.z > 1.975f && speedZ > 0) {
-            speedZ = -std::abs(speedZToggle);
+            speedZ = -speedZ;
         }
         if (BouncingCube.position.z < 0.525f && speedZ < 0) {
-            speedZ = std::abs(speedZToggle);
+            speedZ = -speedZ;
         }
-        speedZ = (speedZ > 0 ? std::abs(speedZToggle) : -std::abs(speedZToggle));
 
-        if ((BouncingCube.position.x > 1.75f || BouncingCube.position.x < -1.75f) || (BouncingCube.position.z > 2.5f || BouncingCube.position.z < 0.0f)) {
+        if (BouncingCube.position.x < -1.225) {
+            leftPlayerScore++;
+            speedX = 1.0f;
+            speedZ = 0.66f;
+            BouncingCube.position = glm::vec3(0.0f, -0.575f, 1.25f);
+        }
+
+        if (BouncingCube.position.x > 1.225) {
+            rightPlayerScore++;
+            speedX = 1.0f;
+            speedZ = 0.66f;
             BouncingCube.position = glm::vec3(0.0f, -0.575f, 1.25f);
         }
         
-
         backgroundCube.render();
         camera.setCameraThings(backgroundCube.BGT.shaderProgram);
         TopCube.render();
@@ -639,29 +717,57 @@ int main()
         camera.setCameraThings(LeftCube.BGT.shaderProgram);
         BouncingCube.render();
         camera.setCameraThings(BouncingCube.BGT.shaderProgram);
+        RightPlayer.render();
+        camera.setCameraThings(RightPlayer.BGT.shaderProgram);
+        LeftPlayer.render();
+        camera.setCameraThings(LeftPlayer.BGT.shaderProgram);
 
-        ImGui::SetNextWindowSize(ImVec2(275, 120));
+        ImVec2 TextSize = ImGui::CalcTextSize(std::to_string(leftPlayerScore).c_str());
+
+        ImGui::SetNextWindowSize(ImVec2(190, 60));
+        ImGui::PushFont(smallFont);
         ImGui::Begin("Settings");
         ImGui::Checkbox("Wireframe (Press R)", &wireframeOn);
-        ImGui::Text("Use arrow keys to change speed values");
-        if (sliderOn == 1) {
-            ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(255, 60, 60, 255)); // darker background (optional)
-            ImGui::SliderFloat("Speed X", &speedXToggle, 0.0f, 50.0f);
-            ImGui::PopStyleColor(1); // Match the number of PushStyleColor calls
-        }
-        else {
-            ImGui::SliderFloat("Speed X", &speedXToggle, 0.0f, 50.0f);
-        }
-
-        if (sliderOn == 2) {
-            ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(255, 60, 60, 255)); // darker background (optional)
-            ImGui::SliderFloat("Speed Z", &speedZToggle, 0.0f, 50.0f);
-            ImGui::PopStyleColor(1); // Match the number of PushStyleColor calls
-        }
-        else {
-            ImGui::SliderFloat("Speed Z", &speedZToggle, 0.0f, 50.0f);
-        }
+        ImGui::PopFont();
         ImGui::End();
+
+
+        ImGui::SetNextWindowBgAlpha(0.0f); // Fully transparent background
+        ImGui::SetNextWindowPos(ImVec2((App.windowWidth / 2) - (App.windowWidth / 4) - (TextSize.x * 20), (App.windowHeight / 2) - (App.windowHeight / 3)), ImGuiCond_Always);
+        ImGui::Begin("OverlayLeft", nullptr,
+            ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoInputs |
+            ImGuiWindowFlags_NoBackground); // Make it look like just text
+
+        ImGui::PushFont(bigFont);
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 0, 255)); // Red color (RGBA)
+        ImGui::Text(std::to_string(leftPlayerScore).c_str());
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+        ImGui::End();
+
+        ImGui::SetNextWindowBgAlpha(0.0f); // Fully transparent background
+        ImGui::SetNextWindowPos(ImVec2((App.windowWidth / 2) + (App.windowWidth / 4), (App.windowHeight / 2) - (App.windowHeight / 3)), ImGuiCond_Always);
+        ImGui::Begin("OverlayRight", nullptr,
+            ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoInputs |
+            ImGuiWindowFlags_NoBackground); // Make it look like just text
+
+        ImGui::PushFont(bigFont);
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 0, 255)); // Red color (RGBA)
+        ImGui::Text(std::to_string(rightPlayerScore).c_str());
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+        ImGui::End();
+        
 
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
