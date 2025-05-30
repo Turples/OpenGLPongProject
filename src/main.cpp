@@ -73,7 +73,7 @@ public:
         const GLFWvidmode* mode = glfwGetVideoMode(monitor);
 
 
-        window = glfwCreateWindow(mode->width, mode->height, "Fly Around Bouncing Ball", monitor, nullptr);
+        window = glfwCreateWindow(mode->width, mode->height, "PING PANG THE SECOND", monitor, nullptr);
         if (window == NULL)
         {
             std::cout << "Failed to create GLFW window" << std::endl;
