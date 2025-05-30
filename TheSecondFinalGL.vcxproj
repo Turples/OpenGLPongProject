@@ -107,7 +107,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\Users\linns\source\repos\TheSecondFinalGL\libs\tinyObjLoader;C:\Users\linns\source\repos\TheSecondFinalGL\libs\stbImageLoader\stb;C:\Users\linns\source\repos\TheSecondFinalGL\libs\imgui-master;C:\Users\linns\source\repos\TheSecondFinalGL\libs\glm-master;C:\Users\linns\source\repos\TheSecondFinalGL\libs\glfw-3.4.bin.WIN64\include;C:\Users\linns\source\repos\TheSecondFinalGL\libs\glad\include;C:\Users\linns\source\repos\TheSecondFinalGL\libs\imgui-master;C:\Users\linns\source\repos\TheSecondFinalGL\libs\stbImageLoader\stb;C:\Users\linns\source\repos\TheSecondFinalGL\libs\tinyObjLoader;C:\Users\linns\source\repos\TheSecondFinalGL\libs\glm-master;C:\Users\linns\source\repos\TheSecondFinalGL\libs\glfw-3.4.bin.WIN64\include;C:\Users\linns\source\repos\TheSecondFinalGL\libs\glad\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\linns\source\repos\TheSecondFinalGL\libs\miniAudio;C:\Users\linns\source\repos\TheSecondFinalGL\libs\tinyObjLoader;C:\Users\linns\source\repos\TheSecondFinalGL\libs\stbImageLoader\stb;C:\Users\linns\source\repos\TheSecondFinalGL\libs\imgui-master;C:\Users\linns\source\repos\TheSecondFinalGL\libs\glm-master;C:\Users\linns\source\repos\TheSecondFinalGL\libs\glfw-3.4.bin.WIN64\include;C:\Users\linns\source\repos\TheSecondFinalGL\libs\glad\include;C:\Users\linns\source\repos\TheSecondFinalGL\libs\imgui-master;C:\Users\linns\source\repos\TheSecondFinalGL\libs\stbImageLoader\stb;C:\Users\linns\source\repos\TheSecondFinalGL\libs\tinyObjLoader;C:\Users\linns\source\repos\TheSecondFinalGL\libs\glm-master;C:\Users\linns\source\repos\TheSecondFinalGL\libs\glfw-3.4.bin.WIN64\include;C:\Users\linns\source\repos\TheSecondFinalGL\libs\glad\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -124,7 +124,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\Users\linns\source\repos\TheSecondFinalGL\libs\tinyObjLoader;C:\Users\linns\source\repos\TheSecondFinalGL\libs\stbImageLoader\stb;C:\Users\linns\source\repos\TheSecondFinalGL\libs\imgui-master;C:\Users\linns\source\repos\TheSecondFinalGL\libs\glm-master;C:\Users\linns\source\repos\TheSecondFinalGL\libs\glfw-3.4.bin.WIN64\include;C:\Users\linns\source\repos\TheSecondFinalGL\libs\glad\include;</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\linns\source\repos\TheSecondFinalGL\libs\miniAudio;C:\Users\linns\source\repos\TheSecondFinalGL\libs\miniAudio;C:\Users\linns\source\repos\TheSecondFinalGL\libs\tinyObjLoader;C:\Users\linns\source\repos\TheSecondFinalGL\libs\stbImageLoader\stb;C:\Users\linns\source\repos\TheSecondFinalGL\libs\imgui-master;C:\Users\linns\source\repos\TheSecondFinalGL\libs\glm-master;C:\Users\linns\source\repos\TheSecondFinalGL\libs\glfw-3.4.bin.WIN64\include;C:\Users\linns\source\repos\TheSecondFinalGL\libs\glad\include</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>

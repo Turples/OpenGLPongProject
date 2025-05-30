@@ -11,11 +11,14 @@
 #include <vector>
 #include <random>
 #include <chrono>
+#include <thread>
+#define MINIAUDIO_IMPLEMENTATION
+#include "miniaudio.h"
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
-#define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
+
+ma_engine engine;
 
 // callback functions 
 
@@ -24,12 +27,24 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height)
     glViewport(0, 0, width, height);
 }
 
+void playSound(const char* soundPath) {
+    ma_engine_play_sound(&engine, soundPath, NULL);
+}
+
 int randomInt(int min, int max) {
     std::random_device rd;                          // Seed
     std::mt19937 gen(rd());                         // Mersenne Twister RNG
     std::uniform_int_distribution<> distr(min, max);   // Range: [1, 10]
 
     return distr(gen);
+}
+
+float randomFloat(float min, float max) {
+    std::random_device rd; // seed
+    std::mt19937 gen(rd()); // Mersenne Twister RNG
+    std::uniform_real_distribution<float> dis(min, max); // range [0.0, 1.0)
+
+    return dis(gen);
 }
 
 float Clamp(float value, float min, float max) {
@@ -88,6 +103,11 @@ public:
         ImGui_ImplGlfw_InitForOpenGL(window, true);
         ImGui_ImplOpenGL3_Init("#version 460");
         io.IniFilename = nullptr;
+
+        if (ma_engine_init(NULL, &engine) != MA_SUCCESS) {
+            std::cerr << "Failed to initialize audio engine." << std::endl;
+            return -1;
+        }
 
         return 0;
 	}
@@ -501,6 +521,656 @@ public:
     }
 };
 
+void resetCube(float& speedX, float& speedZ, renderCube& bouncingCube) {
+    bouncingCube.position = glm::vec3(0.0f, -0.575f, 1.25f);
+
+    const float maxSpeed = 2.0f;
+    const float minXSpeed = 0.5f;
+    const float maxXSpeed = 1.5f;
+
+    do {
+        speedX = randomFloat(-maxSpeed, maxSpeed);
+    } while (std::abs(speedX) < minXSpeed || std::abs(speedX) > maxXSpeed);
+
+    float remainingSpeed = sqrt(maxSpeed * maxSpeed - speedX * speedX);
+    // Randomize direction of speedZ for variety
+    speedZ = (randomFloat(0.0f, 1.0f) > 0.5f) ? remainingSpeed : -remainingSpeed;
+}
+
+class mainScreen {
+public:
+    void Input(myCoolOpenGLApp &App, renderCube &LeftPlayer, renderCube &RightPlayer, ImFont* smallFont) {
+        static bool wireframeOn = false;     // Must be static to persist
+        static bool rPressed = false;
+
+        if (glfwGetKey(App.window, GLFW_KEY_W) == GLFW_PRESS)
+            LeftPlayer.position.z += 0.75f * App.deltaTime;
+        if (glfwGetKey(App.window, GLFW_KEY_S) == GLFW_PRESS)
+            LeftPlayer.position.z -= 0.75f * App.deltaTime;
+
+        if (glfwGetKey(App.window, GLFW_KEY_UP) == GLFW_PRESS)
+            RightPlayer.position.z += 0.75f * App.deltaTime;
+        if (glfwGetKey(App.window, GLFW_KEY_DOWN) == GLFW_PRESS)
+            RightPlayer.position.z -= 0.75f * App.deltaTime;
+
+        LeftPlayer.position.z = Clamp(LeftPlayer.position.z, 0.6f, 1.9f);
+        RightPlayer.position.z = Clamp(RightPlayer.position.z, 0.6f, 1.9f);
+
+        if (glfwGetKey(App.window, GLFW_KEY_R) == GLFW_PRESS) {
+            if (!rPressed) {
+                wireframeOn = !wireframeOn;
+                rPressed = true;
+            }
+        }
+        else {
+            rPressed = false;
+        }
+
+        (wireframeOn ? glPolygonMode(GL_FRONT_AND_BACK, GL_LINE) : glPolygonMode(GL_FRONT_AND_BACK, GL_FILL));
+
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+
+        ImGui::SetNextWindowSize(ImVec2(190, 60));
+        ImGui::PushFont(smallFont);
+        ImGui::Begin("Settings");
+        ImGui::Checkbox("Wireframe (Press R)", &wireframeOn);
+        ImGui::PopFont();
+        ImGui::End();
+
+        ImGui::Render();
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    }
+
+    void Render(basicGraphicalThings &BGT, myCoolOpenGLApp &App, Camera &camera, renderCube &backgroundCube, renderCube &TopCube, renderCube &BottomCube, renderCube &RightCube, renderCube &LeftCube, renderCube &BouncingCube, renderCube &LeftPlayer, renderCube &RightPlayer, float &speedX, float &speedZ, ImFont* &bigFont, ImFont* &smallFont, int &leftPlayerScore, int &rightPlayerScore, int &screenOn, bool &Timed) {
+        GLint viewport[4];
+        glGetIntegerv(GL_VIEWPORT, viewport);
+
+        if (App.windowWidth != viewport[2] || App.windowHeight != viewport[3]) {
+            App.windowWidth = viewport[2];
+            App.windowHeight = viewport[3];
+
+            camera.projection = camera.getProjection();
+            glViewport(0, 0, App.windowWidth, App.windowHeight);
+        }
+
+        App.makeDeltaTime();
+        glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+
+        static bool hasBouncedX = false;
+        static bool hasBouncedZ = false;
+
+        static int TimerValue = 3;
+        static bool timerStarted = false;
+        static float timerStartTime = 0.0f;
+
+        if (Timed) {
+            if (!timerStarted) {
+                playSound("./sounds/countdown.wav");
+                timerStartTime = glfwGetTime();
+                timerStarted = true;
+                BouncingCube.position = glm::vec3(0.0f, -0.575f, 1.25f);
+            }
+
+            float currentTime = glfwGetTime();
+            float elapsed = currentTime - timerStartTime;
+            int TimerValue = 3 - floor(elapsed);
+
+            if (TimerValue <= 0) {
+                resetCube(speedX, speedZ, BouncingCube);
+                Timed = false;
+                timerStarted = false;
+                TimerValue = 3;
+            }
+
+            ImGui::SetNextWindowBgAlpha(0.0f); // Fully transparent background
+            ImGui::SetNextWindowPos(ImVec2(0.0f, 100.0f), ImGuiCond_Always);
+            ImGui::Begin("Timer", nullptr,
+                ImGuiWindowFlags_NoTitleBar |
+                ImGuiWindowFlags_NoResize |
+                ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoScrollbar |
+                ImGuiWindowFlags_NoSavedSettings |
+                ImGuiWindowFlags_NoInputs |
+                ImGuiWindowFlags_NoBackground); // Make it look like just text
+
+            ImGui::PushFont(bigFont);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.0f, 1.0f, 1.0f));
+            float textWidth = ImGui::CalcTextSize(std::to_string(TimerValue).c_str()).x;
+
+            ImGui::SetCursorPosX((App.windowWidth - textWidth) * 0.5f); // Center horizontally
+            ImGui::Text("%s", std::to_string(TimerValue).c_str());
+            ImGui::PopStyleColor();
+            ImGui::PopFont();
+            ImGui::End();
+        }
+        else {
+
+            BouncingCube.position.x += speedX * App.deltaTime;
+            BouncingCube.position.z += speedZ * App.deltaTime;
+
+            bool leftPlayerHit = (
+                BouncingCube.position.x - (BouncingCube.scale.x / 2) < LeftPlayer.position.x + (LeftPlayer.scale.x / 2) &&
+                BouncingCube.position.x + (BouncingCube.scale.x / 2) > LeftPlayer.position.x - (LeftPlayer.scale.x / 2) &&
+                BouncingCube.position.z - (BouncingCube.scale.z / 2) < LeftPlayer.position.z + (LeftPlayer.scale.z / 2) &&
+                BouncingCube.position.z + (BouncingCube.scale.z / 2) > LeftPlayer.position.z - (LeftPlayer.scale.z / 2)
+                );
+
+            bool rightPlayerHit = (
+                BouncingCube.position.x - (BouncingCube.scale.x / 2) < RightPlayer.position.x + (RightPlayer.scale.x / 2) &&
+                BouncingCube.position.x + (BouncingCube.scale.x / 2) > RightPlayer.position.x - (RightPlayer.scale.x / 2) &&
+                BouncingCube.position.z - (BouncingCube.scale.z / 2) < RightPlayer.position.z + (RightPlayer.scale.z / 2) &&
+                BouncingCube.position.z + (BouncingCube.scale.z / 2) > RightPlayer.position.z - (RightPlayer.scale.z / 2)
+                );
+
+            static float paddleHitCooldown = 0.0f;
+            const float paddleHitDelay = 0.1f; // seconds
+
+            if (paddleHitCooldown > 0.0f)
+                paddleHitCooldown -= App.deltaTime;
+
+            if (leftPlayerHit) {
+                if (paddleHitCooldown <= 0.0f) {
+                    playSound("./sounds/dink.wav");
+                    paddleHitCooldown = paddleHitDelay;
+                }
+                    
+                // Calculate overlap for left player separately
+                float overlapXLeft = 0.0f;
+                if (BouncingCube.position.x < LeftPlayer.position.x) {
+                    overlapXLeft = (BouncingCube.position.x + BouncingCube.scale.x / 2) - (LeftPlayer.position.x - LeftPlayer.scale.x / 2);
+                }
+                else {
+                    overlapXLeft = (LeftPlayer.position.x + LeftPlayer.scale.x / 2) - (BouncingCube.position.x - BouncingCube.scale.x / 2);
+                }
+
+                float overlapZLeft = 0.0f;
+                if (BouncingCube.position.z < LeftPlayer.position.z) {
+                    overlapZLeft = (BouncingCube.position.z + BouncingCube.scale.z / 2) - (LeftPlayer.position.z - LeftPlayer.scale.z / 2);
+                }
+                else {
+                    overlapZLeft = (LeftPlayer.position.z + LeftPlayer.scale.z / 2) - (BouncingCube.position.z - BouncingCube.scale.z / 2);
+                }
+
+                // Reflect speeds based on which overlap is smaller (collision axis)
+                if (overlapXLeft < overlapZLeft && speedX > 0 && !hasBouncedX) {  // The cube is moving towards the left player (speedX > 0)
+                    (speedX > 0 ? speedX += 0.1f : speedX -= 0.1f);
+                    speedX = -speedX;
+                    hasBouncedX = true;
+                }
+                else if (overlapZLeft < overlapXLeft && !hasBouncedZ) {
+                    (speedZ > 0 ? speedZ += 0.1f : speedZ -= 0.1f);
+                    speedZ = -speedZ;
+                    hasBouncedZ = true;
+                }
+            }
+
+            if (rightPlayerHit) {
+                if (paddleHitCooldown <= 0.0f) {
+                    playSound("./sounds/dink.wav");
+                    paddleHitCooldown = paddleHitDelay;
+                }
+                    
+                // Calculate overlap for right player separately
+                float overlapXRight = 0.0f;
+                if (BouncingCube.position.x < RightPlayer.position.x) {
+                    overlapXRight = (BouncingCube.position.x + BouncingCube.scale.x / 2) - (RightPlayer.position.x - RightPlayer.scale.x / 2);
+                }
+                else {
+                    overlapXRight = (RightPlayer.position.x + RightPlayer.scale.x / 2) - (BouncingCube.position.x - BouncingCube.scale.x / 2);
+                }
+
+                float overlapZRight = 0.0f;
+                if (BouncingCube.position.z < RightPlayer.position.z) {
+                    overlapZRight = (BouncingCube.position.z + BouncingCube.scale.z / 2) - (RightPlayer.position.z - RightPlayer.scale.z / 2);
+                }
+                else {
+                    overlapZRight = (RightPlayer.position.z + RightPlayer.scale.z / 2) - (BouncingCube.position.z - BouncingCube.scale.z / 2);
+                }
+
+                if (overlapXRight < overlapZRight && speedX < 0 && !hasBouncedX) {  // Moving toward right player
+                    (speedX > 0 ? speedX += 0.1f : speedX -= 0.1f);
+                    speedX = -speedX;
+                    hasBouncedX = true;
+                }
+                else if (overlapZRight < overlapXRight && !hasBouncedZ) {
+                    (speedZ > 0 ? speedZ += 0.1f : speedZ -= 0.1f);
+                    speedZ = -speedZ;
+                    hasBouncedZ = true;
+                }
+            }
+
+            if (!leftPlayerHit && !rightPlayerHit) {
+                hasBouncedX = false;
+                hasBouncedZ = false;
+            }
+
+            // Calculate overlaps on Z axis
+
+            if (BouncingCube.position.z > 1.975f && speedZ > 0) {
+                speedZ = -speedZ;
+            }
+            if (BouncingCube.position.z < 0.525f && speedZ < 0) {
+                speedZ = -speedZ;
+            }
+
+            if (BouncingCube.position.x < -1.225) {
+                leftPlayerScore++;
+                Timed = true;
+                playSound("./sounds/getPoint.wav");
+            }
+
+            if (BouncingCube.position.x > 1.225) {
+                rightPlayerScore++;
+                Timed = true;
+                playSound("./sounds/getPoint.wav");
+            }
+
+            if (leftPlayerScore > 8) {
+                screenOn = 1;
+                playSound("./sounds/win.wav");
+            }
+                
+            if (rightPlayerScore > 8) {
+                screenOn = 2;
+                playSound("./sounds/win.wav");
+            }
+        }
+
+        backgroundCube.render();
+        camera.setCameraThings(backgroundCube.BGT.shaderProgram);
+        TopCube.render();
+        camera.setCameraThings(TopCube.BGT.shaderProgram);
+        BottomCube.render();
+        camera.setCameraThings(BottomCube.BGT.shaderProgram);
+        RightCube.render();
+        camera.setCameraThings(RightCube.BGT.shaderProgram);
+        LeftCube.render();
+        camera.setCameraThings(LeftCube.BGT.shaderProgram);
+        BouncingCube.render();
+        camera.setCameraThings(BouncingCube.BGT.shaderProgram);
+        RightPlayer.render();
+        camera.setCameraThings(RightPlayer.BGT.shaderProgram);
+        LeftPlayer.render();
+        camera.setCameraThings(LeftPlayer.BGT.shaderProgram);
+
+        ImGui::SetNextWindowBgAlpha(0.0f); // Fully transparent background
+        ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(App.windowWidth, App.windowHeight)); // Fullscreen
+        ImGui::Begin("OverlayLeft", nullptr,
+            ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoInputs |
+            ImGuiWindowFlags_NoBackground); // Make it look like just text
+
+        ImGui::PushFont(bigFont);
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 0, 255)); // Red color (RGBA)
+
+        ImVec2 textSizeLeft = ImGui::CalcTextSize(std::to_string(leftPlayerScore).c_str());
+
+        ImGui::SetCursorPos(ImVec2(
+            ((App.windowWidth - textSizeLeft.x) * 0.5f) - 200.0f,
+            150.0f
+        ));
+        ImGui::Text("%s", std::to_string(leftPlayerScore).c_str());
+
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+        ImGui::End();
+
+        ImGui::SetNextWindowBgAlpha(0.0f); // Fully transparent background
+        ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(App.windowWidth, App.windowHeight)); // Fullscreen
+        ImGui::Begin("OverlayRight", nullptr,
+            ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoInputs |
+            ImGuiWindowFlags_NoBackground); // Make it look like just text
+
+        ImGui::PushFont(bigFont);
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 0, 255)); // Red color (RGBA)
+        
+        ImVec2 textSizeRight = ImGui::CalcTextSize(std::to_string(rightPlayerScore).c_str());
+
+        ImGui::SetCursorPos(ImVec2(
+            ((App.windowWidth - textSizeRight.x) * 0.5f) + 200.0f,
+            150.0f
+        ));
+        ImGui::Text("%s", std::to_string(rightPlayerScore).c_str());
+
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+        ImGui::End();
+
+        ImGui::Render();
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    }
+};
+
+class startScreen {
+public:
+    void Render(myCoolOpenGLApp &App, ImFont* &bigFont, ImFont* &mediumFont, int &screenOn) {
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+
+        ImGui::SetNextWindowSize(ImVec2(App.windowWidth, App.windowHeight));
+        ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
+        ImGui::Begin("Main Screen", nullptr,
+            ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoInputs); // Make it look like just text
+        ImGui::End();
+
+        ImGui::SetNextWindowBgAlpha(0.0f); // Fully transparent background
+        ImGui::SetNextWindowPos(ImVec2(0.0f, 100.0f), ImGuiCond_Always);
+        ImGui::Begin("Title", nullptr,
+            ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoInputs |
+            ImGuiWindowFlags_NoBackground); // Make it look like just text
+
+        ImGui::PushFont(bigFont);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        const char* text = "PING PANG THE SECOND";
+        float textWidth = ImGui::CalcTextSize(text).x;
+
+        ImGui::SetCursorPosX((App.windowWidth - textWidth) * 0.5f); // Center horizontally
+        ImGui::Text("%s", text);
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+
+        ImGui::End();
+
+        ImGui::SetNextWindowBgAlpha(0.0f); // Fully transparent background
+        ImGui::SetNextWindowPos(ImVec2(0.0f, App.windowHeight / 2), ImGuiCond_Always);
+        ImGui::Begin("Start Button", nullptr,
+            ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoBackground); // Make it look like just text
+
+        ImGui::PushFont(mediumFont);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        float buttonWidth = 500;
+
+        ImGui::SetCursorPosX((App.windowWidth - buttonWidth) * 0.5f); // Center horizontally
+        if (ImGui::Button("Start Game", ImVec2(buttonWidth, 100))) {
+            screenOn = 0;
+        }
+        ImVec2 p = ImGui::GetItemRectMin(); // Top-left of last item (button)
+        ImVec2 q = ImGui::GetItemRectMax(); // Bottom-right of last item
+
+        ImGui::GetWindowDrawList()->AddRect(p, q, IM_COL32(0, 255, 0, 255), 0.0f, 0, 5.0f);
+
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+
+        ImGui::End();
+
+        ImGui::SetNextWindowBgAlpha(0.0f); // Fully transparent background
+        ImGui::SetNextWindowPos(ImVec2(0.0f, (App.windowHeight / 2) + 120), ImGuiCond_Always);
+        ImGui::Begin("Quit Button", nullptr,
+            ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoBackground); // Make it look like just text
+
+        ImGui::PushFont(mediumFont);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        float buttonWidthQuit = 500;
+
+        ImGui::SetCursorPosX((App.windowWidth - buttonWidthQuit) * 0.5f); // Center horizontally
+        if (ImGui::Button("Quit Game", ImVec2(buttonWidthQuit, 100))) {
+            glfwSetWindowShouldClose(App.window, GL_TRUE);
+        }
+        ImVec2 pQuit = ImGui::GetItemRectMin(); // Top-left of last item (button)
+        ImVec2 qQuit = ImGui::GetItemRectMax(); // Bottom-right of last item
+
+        ImGui::GetWindowDrawList()->AddRect(pQuit, qQuit, IM_COL32(0, 255, 0, 255), 0.0f, 0, 5.0f);
+
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+
+        ImGui::End();
+
+        ImGui::Render();
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    }
+};
+
+class leftPlayerWins {
+public:
+    void Render(myCoolOpenGLApp& App, ImFont*& bigFont, ImFont*& mediumFont, int& screenOn, int &leftPlayerScore, int &rightPlayerScore, float& speedX, float& speedZ, renderCube& bouncingCube) {
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+
+        ImGui::SetNextWindowSize(ImVec2(App.windowWidth, App.windowHeight));
+        ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
+        ImGui::Begin("Main Screen", nullptr,
+            ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoInputs); // Make it look like just text
+        ImGui::End();
+
+        ImGui::SetNextWindowBgAlpha(0.0f); // Fully transparent background
+        ImGui::SetNextWindowPos(ImVec2(0.0f, 100.0f), ImGuiCond_Always);
+        ImGui::Begin("Title", nullptr,
+            ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoInputs |
+            ImGuiWindowFlags_NoBackground); // Make it look like just text
+
+        ImGui::PushFont(bigFont);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        const char* text = "Left Player Wins!";
+        float textWidth = ImGui::CalcTextSize(text).x;
+
+        ImGui::SetCursorPosX((App.windowWidth - textWidth) * 0.5f); // Center horizontally
+        ImGui::Text("%s", text);
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+
+        ImGui::End();
+
+        ImGui::SetNextWindowBgAlpha(0.0f); // Fully transparent background
+        ImGui::SetNextWindowPos(ImVec2(0.0f, App.windowHeight / 2), ImGuiCond_Always);
+        ImGui::Begin("Play Again", nullptr,
+            ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoBackground); // Make it look like just text
+
+        ImGui::PushFont(mediumFont);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        float buttonWidth = 500;
+
+        ImGui::SetCursorPosX((App.windowWidth - buttonWidth) * 0.5f); // Center horizontally
+        if (ImGui::Button("Play Again", ImVec2(buttonWidth, 100))) {
+            screenOn = 0;
+            leftPlayerScore = 0;
+            rightPlayerScore = 0;
+            resetCube(speedX, speedZ, bouncingCube);
+        }
+        ImVec2 p = ImGui::GetItemRectMin(); // Top-left of last item (button)
+        ImVec2 q = ImGui::GetItemRectMax(); // Bottom-right of last item
+
+        ImGui::GetWindowDrawList()->AddRect(p, q, IM_COL32(0, 255, 0, 255), 0.0f, 0, 5.0f);
+
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+
+        ImGui::End();
+
+        ImGui::SetNextWindowBgAlpha(0.0f); // Fully transparent background
+        ImGui::SetNextWindowPos(ImVec2(0.0f, (App.windowHeight / 2) + 120), ImGuiCond_Always);
+        ImGui::Begin("Quit Button", nullptr,
+            ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoBackground); // Make it look like just text
+
+        ImGui::PushFont(mediumFont);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        float buttonWidthQuit = 500;
+
+        ImGui::SetCursorPosX((App.windowWidth - buttonWidthQuit) * 0.5f); // Center horizontally
+        if (ImGui::Button("Quit Game", ImVec2(buttonWidthQuit, 100))) {
+            glfwSetWindowShouldClose(App.window, GL_TRUE);
+        }
+        ImVec2 pQuit = ImGui::GetItemRectMin(); // Top-left of last item (button)
+        ImVec2 qQuit = ImGui::GetItemRectMax(); // Bottom-right of last item
+
+        ImGui::GetWindowDrawList()->AddRect(pQuit, qQuit, IM_COL32(0, 255, 0, 255), 0.0f, 0, 5.0f);
+
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+
+        ImGui::End();
+
+        ImGui::Render();
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    }
+};
+
+class rightPlayerWins {
+public:
+    void Render(myCoolOpenGLApp& App, ImFont*& bigFont, ImFont*& mediumFont, int& screenOn, int& leftPlayerScore, int& rightPlayerScore, float& speedX, float& speedZ, renderCube& bouncingCube) {
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+
+        ImGui::SetNextWindowSize(ImVec2(App.windowWidth, App.windowHeight));
+        ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
+        ImGui::Begin("Main Screen", nullptr,
+            ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoInputs); // Make it look like just text
+        ImGui::End();
+
+        ImGui::SetNextWindowBgAlpha(0.0f); // Fully transparent background
+        ImGui::SetNextWindowPos(ImVec2(0.0f, 100.0f), ImGuiCond_Always);
+        ImGui::Begin("Title", nullptr,
+            ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoInputs |
+            ImGuiWindowFlags_NoBackground); // Make it look like just text
+
+        ImGui::PushFont(bigFont);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        const char* text = "Right Player Wins!";
+        float textWidth = ImGui::CalcTextSize(text).x;
+
+        ImGui::SetCursorPosX((App.windowWidth - textWidth) * 0.5f); // Center horizontally
+        ImGui::Text("%s", text);
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+
+        ImGui::End();
+
+        ImGui::SetNextWindowBgAlpha(0.0f); // Fully transparent background
+        ImGui::SetNextWindowPos(ImVec2(0.0f, App.windowHeight / 2), ImGuiCond_Always);
+        ImGui::Begin("Play Again", nullptr,
+            ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoBackground); // Make it look like just text
+
+        ImGui::PushFont(mediumFont);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        float buttonWidth = 500;
+
+        ImGui::SetCursorPosX((App.windowWidth - buttonWidth) * 0.5f); // Center horizontally
+        if (ImGui::Button("Play Again", ImVec2(buttonWidth, 100))) {
+            screenOn = 0;
+            leftPlayerScore = 0;
+            rightPlayerScore = 0;
+            resetCube(speedX, speedZ, bouncingCube);
+        }
+        ImVec2 p = ImGui::GetItemRectMin(); // Top-left of last item (button)
+        ImVec2 q = ImGui::GetItemRectMax(); // Bottom-right of last item
+
+        ImGui::GetWindowDrawList()->AddRect(p, q, IM_COL32(0, 255, 0, 255), 0.0f, 0, 5.0f);
+
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+
+        ImGui::End();
+
+        ImGui::SetNextWindowBgAlpha(0.0f); // Fully transparent background
+        ImGui::SetNextWindowPos(ImVec2(0.0f, (App.windowHeight / 2) + 120), ImGuiCond_Always);
+        ImGui::Begin("Quit Button", nullptr,
+            ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoBackground); // Make it look like just text
+
+        ImGui::PushFont(mediumFont);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        float buttonWidthQuit = 500;
+
+        ImGui::SetCursorPosX((App.windowWidth - buttonWidthQuit) * 0.5f); // Center horizontally
+        if (ImGui::Button("Quit Game", ImVec2(buttonWidthQuit, 100))) {
+            glfwSetWindowShouldClose(App.window, GL_TRUE);
+        }
+        ImVec2 pQuit = ImGui::GetItemRectMin(); // Top-left of last item (button)
+        ImVec2 qQuit = ImGui::GetItemRectMax(); // Bottom-right of last item
+
+        ImGui::GetWindowDrawList()->AddRect(pQuit, qQuit, IM_COL32(0, 255, 0, 255), 0.0f, 0, 5.0f);
+
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+
+        ImGui::End();
+
+        ImGui::Render();
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    }
+};
+
 int main()
 {
     myCoolOpenGLApp App;
@@ -511,6 +1181,13 @@ int main()
     basicGraphicalThings BGT;
     verticesAndIndicesForShapes VAIFS;
     Camera camera(App.window, App.windowWidth, App.windowHeight);
+    mainScreen MAINSCREEN;
+    startScreen STARTSCREEN;
+    leftPlayerWins LEFTSCREEN;
+    rightPlayerWins RIGHTSCREEN;
+
+    // the screens are Main, Left Wins, Right Wins, and Start.
+    int screenOn = 3;
 
     renderCube backgroundCube;
     backgroundCube.setup(0.0f, 1.0f, 0.0f, 1.0f, glm::vec3(0.0f, -0.75f, 1.25f), glm::vec3(3.0f, 0.1f, 2.0f));
@@ -536,247 +1213,50 @@ int main()
     renderCube LeftPlayer;
     LeftPlayer.setup(1.0f, 0.0f, 0.0f, 1.0f, glm::vec3(1.0, -0.75, 1.25), glm::vec3(0.10f, 0.25f, 0.40f));
 
-    float speedX = 1;
-    float speedZ = 0.66;
+    float speedX;
+    float speedZ;
     int leftPlayerScore = 0;
     int rightPlayerScore = 0;
+
+    bool Timed = true;
 
     ImGuiIO& io = ImGui::GetIO();
     ImFont* smallFont = io.Fonts->AddFontFromFileTTF("fonts\\VCR_OSD_MONO_1.001.ttf", 12.0f); // 32 px
     ImFont* bigFont = io.Fonts->AddFontFromFileTTF("fonts\\VCR_OSD_MONO_1.001.ttf", 120.0f); // 32 px
+    ImFont* mediumFont = io.Fonts->AddFontFromFileTTF("fonts\\VCR_OSD_MONO_1.001.ttf", 60.0f); // 32 px
 
     camera.setPosition(glm::vec3(0.0f, 3.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 
-    App.mainLoop([&App, &LeftPlayer, &RightPlayer] {
-        if (glfwGetKey(App.window, GLFW_KEY_W) == GLFW_PRESS)
-            LeftPlayer.position.z += 0.75f * App.deltaTime;
-        if (glfwGetKey(App.window, GLFW_KEY_S) == GLFW_PRESS)
-            LeftPlayer.position.z -= 0.75f * App.deltaTime;
+    App.mainLoop(
+        [&App, &LeftPlayer, &RightPlayer, &MAINSCREEN, &screenOn, &smallFont] {
+            if (screenOn == 0)
+                MAINSCREEN.Input(App, LeftPlayer, RightPlayer, smallFont);
+        },
+        [&BGT, &App, &camera, &backgroundCube, &TopCube, &BottomCube, &RightCube, &LeftCube,
+        &BouncingCube, &LeftPlayer, &RightPlayer, &speedX, &speedZ, &bigFont, &smallFont,
+        &leftPlayerScore, &rightPlayerScore, &MAINSCREEN, &STARTSCREEN, &LEFTSCREEN, &RIGHTSCREEN,
+        &screenOn, &mediumFont, &Timed] {
 
-        if (glfwGetKey(App.window, GLFW_KEY_UP) == GLFW_PRESS)
-            RightPlayer.position.z += 0.75f * App.deltaTime;
-        if (glfwGetKey(App.window, GLFW_KEY_DOWN) == GLFW_PRESS)
-            RightPlayer.position.z -= 0.75f * App.deltaTime;
-
-        LeftPlayer.position.z = Clamp(LeftPlayer.position.z, 0.6f, 1.9f);
-        RightPlayer.position.z = Clamp(RightPlayer.position.z, 0.6f, 1.9f);
-    },
-    [&BGT, &App, &camera, &backgroundCube, &TopCube, &BottomCube, &RightCube, &LeftCube, &BouncingCube, &LeftPlayer, &RightPlayer, &speedX, &speedZ, &bigFont, &smallFont, &leftPlayerScore, &rightPlayerScore] {
-        GLint viewport[4];
-        glGetIntegerv(GL_VIEWPORT, viewport);
-
-        if (App.windowWidth != viewport[2] || App.windowHeight != viewport[3]) {
-            App.windowWidth = viewport[2];
-            App.windowHeight = viewport[3];
-
-            camera.projection = camera.getProjection();
-            glViewport(0, 0, App.windowWidth, App.windowHeight);
+            if (screenOn == 3)
+                STARTSCREEN.Render(App, bigFont, mediumFont, screenOn);
+            if (screenOn == 1)
+                LEFTSCREEN.Render(App, bigFont, mediumFont, screenOn, leftPlayerScore, rightPlayerScore, speedX, speedZ, BouncingCube);
+            if (screenOn == 2)
+                RIGHTSCREEN.Render(App, bigFont, mediumFont, screenOn, leftPlayerScore, rightPlayerScore, speedX, speedZ, BouncingCube);
+            if (screenOn == 0)
+                MAINSCREEN.Render(BGT, App, camera,
+                    backgroundCube, TopCube, BottomCube,
+                    RightCube, LeftCube, BouncingCube,
+                    LeftPlayer, RightPlayer, speedX, speedZ,
+                    bigFont, smallFont, leftPlayerScore, rightPlayerScore, screenOn, Timed);
         }
-
-        App.makeDeltaTime();
-        glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
-
-        static bool wireframeOn = false;     // Must be static to persist
-        static bool rPressed = false;
-        static bool hasBouncedX = false;
-        static bool hasBouncedZ = false;
-
-        if (glfwGetKey(App.window, GLFW_KEY_R) == GLFW_PRESS) {
-            if (!rPressed) {
-                wireframeOn = !wireframeOn;
-                rPressed = true;
-            }
-        }
-        else {
-            rPressed = false;
-        }
-
-        (wireframeOn ? glPolygonMode(GL_FRONT_AND_BACK, GL_LINE) : glPolygonMode(GL_FRONT_AND_BACK, GL_FILL));
-
-        BouncingCube.position.x += speedX * App.deltaTime;
-        BouncingCube.position.z += speedZ * App.deltaTime;
-
-        bool leftPlayerHit = (
-            BouncingCube.position.x - (BouncingCube.scale.x / 2) < LeftPlayer.position.x + (LeftPlayer.scale.x / 2) &&
-            BouncingCube.position.x + (BouncingCube.scale.x / 2) > LeftPlayer.position.x - (LeftPlayer.scale.x / 2) &&
-            BouncingCube.position.z - (BouncingCube.scale.z / 2) < LeftPlayer.position.z + (LeftPlayer.scale.z / 2) &&
-            BouncingCube.position.z + (BouncingCube.scale.z / 2) > LeftPlayer.position.z - (LeftPlayer.scale.z / 2)
-            );
-
-        bool rightPlayerHit = (
-            BouncingCube.position.x - (BouncingCube.scale.x / 2) < RightPlayer.position.x + (RightPlayer.scale.x / 2) &&
-            BouncingCube.position.x + (BouncingCube.scale.x / 2) > RightPlayer.position.x - (RightPlayer.scale.x / 2) &&
-            BouncingCube.position.z - (BouncingCube.scale.z / 2) < RightPlayer.position.z + (RightPlayer.scale.z / 2) &&
-            BouncingCube.position.z + (BouncingCube.scale.z / 2) > RightPlayer.position.z - (RightPlayer.scale.z / 2)
-            );
-
-
-        if (leftPlayerHit) {
-            // Calculate overlap for left player separately
-            float overlapXLeft = 0.0f;
-            if (BouncingCube.position.x < LeftPlayer.position.x) {
-                overlapXLeft = (BouncingCube.position.x + BouncingCube.scale.x / 2) - (LeftPlayer.position.x - LeftPlayer.scale.x / 2);
-            }
-            else {
-                overlapXLeft = (LeftPlayer.position.x + LeftPlayer.scale.x / 2) - (BouncingCube.position.x - BouncingCube.scale.x / 2);
-            }
-
-            float overlapZLeft = 0.0f;
-            if (BouncingCube.position.z < LeftPlayer.position.z) {
-                overlapZLeft = (BouncingCube.position.z + BouncingCube.scale.z / 2) - (LeftPlayer.position.z - LeftPlayer.scale.z / 2);
-            }
-            else {
-                overlapZLeft = (LeftPlayer.position.z + LeftPlayer.scale.z / 2) - (BouncingCube.position.z - BouncingCube.scale.z / 2);
-            }
-
-            // Reflect speeds based on which overlap is smaller (collision axis)
-            if (overlapXLeft < overlapZLeft && speedX > 0 && !hasBouncedX) {  // The cube is moving towards the left player (speedX > 0)
-                (speedX > 0 ? speedX += 0.1f : speedX -= 0.1f);
-                speedX = -speedX;
-                hasBouncedX = true;
-            }
-            else if (overlapZLeft < overlapXLeft && !hasBouncedZ) {
-                (speedZ > 0 ? speedZ += 0.1f : speedZ -= 0.1f);
-                speedZ = -speedZ;
-                hasBouncedZ = true;
-            }
-        }
-
-        if (rightPlayerHit) {
-            // Calculate overlap for right player separately
-            float overlapXRight = 0.0f;
-            if (BouncingCube.position.x < RightPlayer.position.x) {
-                overlapXRight = (BouncingCube.position.x + BouncingCube.scale.x / 2) - (RightPlayer.position.x - RightPlayer.scale.x / 2);
-            }
-            else {
-                overlapXRight = (RightPlayer.position.x + RightPlayer.scale.x / 2) - (BouncingCube.position.x - BouncingCube.scale.x / 2);
-            }
-
-            float overlapZRight = 0.0f;
-            if (BouncingCube.position.z < RightPlayer.position.z) {
-                overlapZRight = (BouncingCube.position.z + BouncingCube.scale.z / 2) - (RightPlayer.position.z - RightPlayer.scale.z / 2);
-            }
-            else {
-                overlapZRight = (RightPlayer.position.z + RightPlayer.scale.z / 2) - (BouncingCube.position.z - BouncingCube.scale.z / 2);
-            }
-
-            if (overlapXRight < overlapZRight && speedX < 0 && !hasBouncedX) {  // Moving toward right player
-                (speedX > 0 ? speedX += 0.1f : speedX -= 0.1f);
-                speedX = -speedX;
-                hasBouncedX = true;
-            }
-            else if (overlapZRight < overlapXRight && !hasBouncedZ) {
-                (speedZ > 0 ? speedZ += 0.1f : speedZ -= 0.1f);
-                speedZ = -speedZ;
-                hasBouncedZ = true;
-            }
-        }
-
-        if (!leftPlayerHit && !rightPlayerHit) {
-            hasBouncedX = false;
-            hasBouncedZ = false;
-        }
-
-        // Calculate overlaps on Z axis
-
-        if (BouncingCube.position.z > 1.975f && speedZ > 0) {
-            speedZ = -speedZ;
-        }
-        if (BouncingCube.position.z < 0.525f && speedZ < 0) {
-            speedZ = -speedZ;
-        }
-
-        if (BouncingCube.position.x < -1.225) {
-            leftPlayerScore++;
-            speedX = 1.0f;
-            speedZ = 0.66f;
-            BouncingCube.position = glm::vec3(0.0f, -0.575f, 1.25f);
-        }
-
-        if (BouncingCube.position.x > 1.225) {
-            rightPlayerScore++;
-            speedX = 1.0f;
-            speedZ = 0.66f;
-            BouncingCube.position = glm::vec3(0.0f, -0.575f, 1.25f);
-        }
-        
-        backgroundCube.render();
-        camera.setCameraThings(backgroundCube.BGT.shaderProgram);
-        TopCube.render();
-        camera.setCameraThings(TopCube.BGT.shaderProgram);
-        BottomCube.render();
-        camera.setCameraThings(BottomCube.BGT.shaderProgram);
-        RightCube.render();
-        camera.setCameraThings(RightCube.BGT.shaderProgram);
-        LeftCube.render();
-        camera.setCameraThings(LeftCube.BGT.shaderProgram);
-        BouncingCube.render();
-        camera.setCameraThings(BouncingCube.BGT.shaderProgram);
-        RightPlayer.render();
-        camera.setCameraThings(RightPlayer.BGT.shaderProgram);
-        LeftPlayer.render();
-        camera.setCameraThings(LeftPlayer.BGT.shaderProgram);
-
-        ImVec2 TextSize = ImGui::CalcTextSize(std::to_string(leftPlayerScore).c_str());
-
-        ImGui::SetNextWindowSize(ImVec2(190, 60));
-        ImGui::PushFont(smallFont);
-        ImGui::Begin("Settings");
-        ImGui::Checkbox("Wireframe (Press R)", &wireframeOn);
-        ImGui::PopFont();
-        ImGui::End();
-
-
-        ImGui::SetNextWindowBgAlpha(0.0f); // Fully transparent background
-        ImGui::SetNextWindowPos(ImVec2((App.windowWidth / 2) - (App.windowWidth / 4) - (TextSize.x * 20), (App.windowHeight / 2) - (App.windowHeight / 3)), ImGuiCond_Always);
-        ImGui::Begin("OverlayLeft", nullptr,
-            ImGuiWindowFlags_NoTitleBar |
-            ImGuiWindowFlags_NoResize |
-            ImGuiWindowFlags_NoMove |
-            ImGuiWindowFlags_NoScrollbar |
-            ImGuiWindowFlags_NoSavedSettings |
-            ImGuiWindowFlags_NoInputs |
-            ImGuiWindowFlags_NoBackground); // Make it look like just text
-
-        ImGui::PushFont(bigFont);
-        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 0, 255)); // Red color (RGBA)
-        ImGui::Text(std::to_string(leftPlayerScore).c_str());
-        ImGui::PopStyleColor();
-        ImGui::PopFont();
-        ImGui::End();
-
-        ImGui::SetNextWindowBgAlpha(0.0f); // Fully transparent background
-        ImGui::SetNextWindowPos(ImVec2((App.windowWidth / 2) + (App.windowWidth / 4), (App.windowHeight / 2) - (App.windowHeight / 3)), ImGuiCond_Always);
-        ImGui::Begin("OverlayRight", nullptr,
-            ImGuiWindowFlags_NoTitleBar |
-            ImGuiWindowFlags_NoResize |
-            ImGuiWindowFlags_NoMove |
-            ImGuiWindowFlags_NoScrollbar |
-            ImGuiWindowFlags_NoSavedSettings |
-            ImGuiWindowFlags_NoInputs |
-            ImGuiWindowFlags_NoBackground); // Make it look like just text
-
-        ImGui::PushFont(bigFont);
-        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 0, 255)); // Red color (RGBA)
-        ImGui::Text(std::to_string(rightPlayerScore).c_str());
-        ImGui::PopStyleColor();
-        ImGui::PopFont();
-        ImGui::End();
-        
-
-        ImGui::Render();
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-    });
+    );
 
     // App Clean Up
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
+    ma_engine_uninit(&engine);
     BGT.cleanUp();
     glfwTerminate();
 }
